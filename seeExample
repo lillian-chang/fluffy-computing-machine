@@ -1,0 +1,156 @@
+from selenium import webdriver
+import time
+from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import ElementNotInteractableException
+from selenium.common.exceptions import UnexpectedAlertPresentException
+import pytesseract
+from PIL import Image
+import os
+from collections import defaultdict
+import re
+import itertools
+
+pytesseract.pytesseract.tesseract_cmd = 'C://Program Files/Tesseract-OCR/tesseract.exe'
+    
+
+id_data = '''
+E2XXX93XXX
+'''
+
+id = id_data.split()
+
+def get_threshold(image):
+    pixel_dict = defaultdict(int)
+
+    #pixel and count the pixel
+    rows, cols = image.size
+    for i in range(rows):
+        for j in range(cols):
+            pixel = image.getpixel((i, j))
+            pixel_dict[pixel] += 1
+
+    count_max = max(pixel_dict.values())
+    pixel_dict_reverse = {v:k for k,v in pixel_dict.items()}
+    threshold = pixel_dict_reverse[count_max] 
+
+    return threshold
+
+def get_bin_table(threshold):
+    table = []
+    for i in range(256):
+        rate = 0.1 #Within threshold
+        if threshold*(1-rate)<= i <= threshold*(1+rate):
+            table.append(1)
+        else:
+            table.append(0)
+    return table
+
+def cut_noise(image):
+
+    rows, cols = image.size 
+    change_pos = [] #Record noise
+    
+    #Cut the edge
+    for i in range(1, rows-1):
+        for j in range(1, cols-1):
+            # pixel_set
+            pixel_set = []
+            
+            for m in range(i-1, i+2):
+                for n in range(j-1, j+2):
+                    if image.getpixel((m, n)) != 1: # 1=White,0=Black
+                        pixel_set.append(image.getpixel((m, n)))
+
+            # if<4 -> noise
+            if len(pixel_set) <= 4:
+                change_pos.append((i,j))
+
+    for pos in change_pos:
+        image.putpixel(pos, 1)
+
+    return image 
+
+def OCR_lmj(img_path):
+
+    image = Image.open(img_path) 
+    imgry = image.convert('L') 
+
+    max_pixel = get_threshold(imgry)
+    
+    table = get_bin_table(threshold=max_pixel)
+    out = imgry.point(table, '1')
+
+    out = cut_noise(out)
+
+    out.save('D://查找/旅行業從業人員資料查詢/img_gray.png')
+
+    text = pytesseract.image_to_string(out)
+
+    exclude_char_list = "\n.:'\|?![],()~@#$%^&*_+-={};‘°<>/¥abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\x0c"
+    text = ''.join([x for x in text if x not in exclude_char_list])
+
+    return text
+
+    #go to website
+    edge = webdriver.Edge(executable_path='C:/Program Files/msedgedriver.exe')
+    edge.get("https://travelagency.tbroc.gov.tw/DataQuery/Emp_JobNow.aspx")
+    time.sleep(2)
+
+    #capture valicode
+    time.sleep(1)
+    captcha_tag = edge.find_element_by_xpath('//*[@id="img_validcode"]')
+
+    captcha_tag.screenshot('D:/查找/旅行業從業人員資料查詢/captchas/captcha.png')
+
+    dir = 'D:/查找/旅行業從業人員資料查詢/captchas'
+    for file in os.listdir(dir):
+        if file.endswith('.png') or file.endswith('.jpg'):
+            # print(file)
+            image_path = '%s/%s'%(dir,file) # 圖片路徑
+            recognition = OCR_lmj(image_path) # 圖片識別的文字結果
+            print(recognition)
+
+    for i in id:
+
+        edge.find_element_by_xpath('//*[@id="txtExamNo"]').send_keys(i)
+        time.sleep(1)
+        edge.find_element_by_xpath('//*[@id="txtValidate"]').send_keys(recognition)
+
+        try:
+            edge.find_element_by_xpath('//*[@id="btnQry"]').click()
+            time.sleep(1)
+
+        except UnexpectedAlertPresentException:
+            for t in range(100):
+                try:
+                    imgurl = edge.find_element_by_xpath('//*[@id="img_validcode"]').get_attribute('src')
+                    renew_btn = edge.find_element_by_xpath('//*[@id="img_validcode"]').click()
+                    imgurl2 = imgurl
+                    while(imgurl == imgurl2):
+                        try:
+                            imgurl2 = edge.find_element_by_xpath('//*[@id="img_validcode"]').get_attribute('src')
+                        except:
+                            pass
+                    captcha_tag = edge.find_element_by_xpath('//*[@id="img_validcode"]')
+
+                    time.sleep(3)
+                    captcha_tag.screenshot('D://查找/壽險/captchas/captcha.png')
+                    dir = 'D://查找/壽險/captchas'
+                    for file in os.listdir(dir):
+                        if file.endswith('.png') or file.endswith('.jpg'):
+                            # print(file)
+                            image_path = '%s/%s' % (dir, file) 
+                            recognition = OCR_lmj(image_path)  #Output
+                            print(recognition)
+
+                            edge.find_element_by_xpath('//*[@id="txtValidate"]').send_keys(recognition)
+                            edge.find_element_by_xpath('//*[@id="btnQry"]').click()
+
+
+
+
+                except UnexpectedAlertPresentException:
+                    continue
+                break
+
+       
